@@ -1,0 +1,134 @@
+\
+# Render Blueprint for the HRMS backend (FastAPI, two independent migration chains -
+# KMS in app/models + HRMS in app/hrms/models - sharing one physical database).
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> connect this repo (HRMS_BE) -> Apply.
+# Fields marked `sync: false` are prompted for during setup and stored as Render
+# secrets - they are never written to this file or committed to git.
+#
+# Database: point DATABASE_URL / HRMS_DATABASE_URL at your Neon Postgres connection
+# string (postgresql+asyncpg://...). Render has no managed MySQL, and the app/alembic
+# already support Postgres via this override - see app/core/config.py /
+# app/hrms/core/config.py.
+#
+# First deploy only: migrations do NOT run automatically (see note on startCommand
+# below). After the first deploy, open a Render Shell on this service and run:
+#   alembic upgrade head && alembic -c alembic_hrms.ini upgrade head
+# Re-run the same after any deploy that adds new migrations.
+
+services:
+  - type: web
+    name: hrms-backend
+    runtime: python
+    plan: starter
+    region: virginia # pick whatever Render region is closest to your Neon project's region
+    buildCommand: "pip install -r requirements.txt"
+    # --proxy-headers/--forwarded-allow-ips: Render terminates TLS at its edge proxy and
+    # forwards plain HTTP with X-Forwarded-Proto set. Without these flags, uvicorn/
+    # Starlette don't trust that header, so request.base_url (used by
+    # app/utils/url_rewrite.py to build public file URLs) would report "http://" even
+    # though the real public URL is https:// - producing mixed-content links.
+    #
+    # Migrations are deliberately NOT chained into this command - if a migration ever
+    # fails, you want that to be an explicit, visible step, not something that silently
+    # blocks (or half-runs before) every future deploy's startup.
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips=*"
+    healthCheckPath: /docs
+    autoDeploy: true
+    disk:
+      name: uploads
+      # Both FILE_STORAGE_ROOT and HRMS_UPLOAD_ROOT below live under this mount, so
+      # uploaded files (KMS content library, profile images, HRMS candidate CVs/
+      # certificates/etc.) survive deploys and restarts instead of Render's default
+      # ephemeral filesystem wiping them.
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+
+      # --- Database (Neon Postgres) ---
+      - key: DATABASE_URL
+        sync: false
+      - key: HRMS_DATABASE_URL
+        sync: false
+
+      # --- JWT ---
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRATION_MS
+        value: "86400000"
+      - key: HRMS_JWT_SECRET
+        sync: false
+      - key: HRMS_JWT_EXPIRATION_MINUTES
+        value: "120"
+
+      # --- File storage (see disk above) ---
+      - key: FILE_STORAGE_ROOT
+        value: /var/data/kms_uploads
+      - key: PROFILE_IMAGES_PATH
+        value: "/var/data/kms_uploads/Profile Images"
+      - key: HRMS_UPLOAD_ROOT
+        value: /var/data/hrms_uploads
+      - key: MAX_UPLOAD_SIZE_BYTES
+        value: "1073741824"
+
+      # --- Confidential file access ---
+      - key: CONFIDENTIAL_FILE_USERS
+        sync: false
+
+      # --- Microsoft Graph (email) ---
+      - key: MS_GRAPH_CLIENT_ID
+        sync: false
+      - key: MS_GRAPH_CLIENT_SECRET
+        sync: false
+      - key: MS_GRAPH_TENANT_ID
+        sync: false
+      - key: FROM_EMAIL_ID
+        sync: false
+
+      # --- Password reset ---
+      - key: RESET_PASSWORD_LINK
+        sync: false # set to the deployed frontend's /forgot-password URL
+      - key: RESET_PASSWORD_EXPIRY_MINUTES
+        value: "15"
+
+      # --- SMTP (HRMS mail) ---
+      - key: HRMS_SMTP_HOST
+        value: smtp-mail.outlook.com
+      - key: HRMS_SMTP_PORT
+        value: "587"
+      - key: HRMS_SMTP_USERNAME
+        sync: false
+      - key: HRMS_SMTP_PASSWORD
+        sync: false
+      - key: HRMS_SMTP_USE_TLS
+        value: "true"
+      - key: HRMS_MAIL_FROM_ADDRESS
+        sync: false
+      - key: HRMS_MAIL_FROM_NAME
+        value: "MKS HRMS"
+
+      # --- Notification recipients ---
+      - key: HRMS_CANDIDATE_SUBMISSION_NOTIFY_EMAIL
+        sync: false
+      - key: HRMS_PROFILE_UPDATE_NOTIFY_EMAIL
+        sync: false
+      - key: HRMS_ONBOARDING_NOTIFY_EMAIL
+        sync: false
+
+      # --- Webhook auth ---
+      - key: HRMS_WEBHOOK_API_KEY
+        sync: false
+
+      # --- Frontend base URL (used to build links in emails) ---
+      - key: HRMS_FRONTEND_BASE_URL
+        sync: false # set to the deployed frontend's Render URL
+
+      # --- Work locations dropdown ---
+      - key: HRMS_WORK_LOCATIONS
+        value: "Hyderabad,Coimbatore"
+
+      # --- Default password for newly onboarded HRMS users ---
+      - key: HRMS_DEFAULT_PASSWORD
+        sync: false
