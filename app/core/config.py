@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -53,10 +54,17 @@ class Settings(BaseSettings):
     def sqlalchemy_database_uri(self) -> str:
         if self.database_url:
             return self.database_url
-        return (
-            f"mysql+asyncmy://{self.db_user}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
-        )
+        # Built via URL.create (not an f-string) so special characters in db_user/
+        # db_password - e.g. an "@" in the password - get percent-encoded instead of
+        # corrupting the userinfo/host split.
+        return URL.create(
+            "mysql+asyncmy",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)
 
     @property
     def sqlalchemy_connect_args(self) -> dict:

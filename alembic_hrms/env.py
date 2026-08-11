@@ -18,7 +18,10 @@ if config.config_file_name is not None:
 # (e.g. a new Postgres/Neon environment) without touching hrms_settings/.env, which
 # stays pointed at this app's normal MySQL database. Leave unset for normal use.
 _database_url = os.environ.get("ALEMBIC_DATABASE_URL") or hrms_settings.sqlalchemy_database_uri
-config.set_main_option("sqlalchemy.url", _database_url)
+# set_main_option() goes through configparser's interpolation, which treats "%" as the
+# start of a %(name)s reference - escape it as "%%" so a percent-encoded URL (e.g. an
+# "@" in the password rendered as "%40") round-trips correctly on get_main_option().
+config.set_main_option("sqlalchemy.url", _database_url.replace("%", "%%"))
 
 target_metadata = HrmsBase.metadata
 

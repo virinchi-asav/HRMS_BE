@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class HrmsSettings(BaseSettings):
@@ -70,10 +71,17 @@ class HrmsSettings(BaseSettings):
     def sqlalchemy_database_uri(self) -> str:
         if self.hrms_database_url:
             return self.hrms_database_url
-        return (
-            f"mysql+asyncmy://{self.hrms_db_user}:{self.hrms_db_password}"
-            f"@{self.hrms_db_host}:{self.hrms_db_port}/{self.hrms_db_name}"
-        )
+        # Built via URL.create (not an f-string) so special characters in hrms_db_user/
+        # hrms_db_password - e.g. an "@" in the password - get percent-encoded instead
+        # of corrupting the userinfo/host split.
+        return URL.create(
+            "mysql+asyncmy",
+            username=self.hrms_db_user,
+            password=self.hrms_db_password,
+            host=self.hrms_db_host,
+            port=self.hrms_db_port,
+            database=self.hrms_db_name,
+        ).render_as_string(hide_password=False)
 
     @property
     def sqlalchemy_connect_args(self) -> dict:

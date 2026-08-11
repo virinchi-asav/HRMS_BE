@@ -20,7 +20,10 @@ if config.config_file_name is not None:
 # ALEMBIC_DATABASE_URL - the two chains are independent and may need different targets
 # when testing.)
 _database_url = os.environ.get("ALEMBIC_DATABASE_URL_KMS") or settings.sqlalchemy_database_uri
-config.set_main_option("sqlalchemy.url", _database_url)
+# set_main_option() goes through configparser's interpolation, which treats "%" as the
+# start of a %(name)s reference - escape it as "%%" so a percent-encoded URL (e.g. an
+# "@" in the password rendered as "%40") round-trips correctly on get_main_option().
+config.set_main_option("sqlalchemy.url", _database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
