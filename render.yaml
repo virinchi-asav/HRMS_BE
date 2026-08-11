@@ -1,4 +1,3 @@
-\
 # Render Blueprint for the HRMS backend (FastAPI, two independent migration chains -
 # KMS in app/models + HRMS in app/hrms/models - sharing one physical database).
 #
