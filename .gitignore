@@ -6,6 +6,18 @@ ENV/
 # Pytest
 .pytest_cache/
 
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets / env
+.env
+.env.*
+
+# Logs
+*.log
+
 #Uploads
 hrms_uploads/
 kms_uploads/
