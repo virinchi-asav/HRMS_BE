@@ -14,12 +14,18 @@
 # below). After the first deploy, open a Render Shell on this service and run:
 #   alembic upgrade head && alembic -c alembic_hrms.ini upgrade head
 # Re-run the same after any deploy that adds new migrations.
+#
+# Free tier: no persistent disk (that's a paid add-on), and the free plan spins the
+# service down after ~15 min idle, cold-starting on the next request. Uploaded files
+# (kms_uploads/hrms_uploads, under FILE_STORAGE_ROOT/HRMS_UPLOAD_ROOT's defaults) do NOT
+# survive a redeploy or restart on this tier - acceptable for now, revisit before this
+# holds real user data.
 
 services:
   - type: web
     name: hrms-backend
     runtime: python
-    plan: starter
+    plan: free
     region: virginia # pick whatever Render region is closest to your Neon project's region
     buildCommand: "pip install -r requirements.txt"
     # --proxy-headers/--forwarded-allow-ips: Render terminates TLS at its edge proxy and
@@ -34,14 +40,6 @@ services:
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips=*"
     healthCheckPath: /docs
     autoDeploy: true
-    disk:
-      name: uploads
-      # Both FILE_STORAGE_ROOT and HRMS_UPLOAD_ROOT below live under this mount, so
-      # uploaded files (KMS content library, profile images, HRMS candidate CVs/
-      # certificates/etc.) survive deploys and restarts instead of Render's default
-      # ephemeral filesystem wiping them.
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
@@ -62,13 +60,10 @@ services:
       - key: HRMS_JWT_EXPIRATION_MINUTES
         value: "120"
 
-      # --- File storage (see disk above) ---
-      - key: FILE_STORAGE_ROOT
-        value: /var/data/kms_uploads
-      - key: PROFILE_IMAGES_PATH
-        value: "/var/data/kms_uploads/Profile Images"
-      - key: HRMS_UPLOAD_ROOT
-        value: /var/data/hrms_uploads
+      # --- File storage ---
+      # No persistent disk on the free tier - these are left at their code defaults
+      # (relative paths under the app's own ephemeral working directory), so uploads
+      # are lost on every restart/redeploy. Fine for now; see the free-tier note above.
       - key: MAX_UPLOAD_SIZE_BYTES
         value: "1073741824"
 

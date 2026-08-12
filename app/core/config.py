@@ -53,7 +53,12 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_database_uri(self) -> str:
         if self.database_url:
-            return self.database_url
+            url = self.database_url
+            if url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            elif url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            return url
         # Built via URL.create (not an f-string) so special characters in db_user/
         # db_password - e.g. an "@" in the password - get percent-encoded instead of
         # corrupting the userinfo/host split.
