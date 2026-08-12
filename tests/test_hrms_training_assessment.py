@@ -12,7 +12,7 @@ async def _setup_training(client, admin_headers, hrms_user_factory, has_assessme
     payload = {
         "topic": "Assessment Flow",
         "description": "Testing assessments",
-        "trainer_id": trainer_id,
+        "trainer_ids": [trainer_id],
         "trainee_ids": [trainee_id, other_trainee_id],
         "bu_head_id": bu_head_id,
         "start_date": "2026-05-01",

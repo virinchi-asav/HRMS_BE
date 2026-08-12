@@ -29,7 +29,9 @@ from app.hrms.models.training import (
     TrainingDayEntryEntity,
     TrainingMaterialEntity,
     TrainingProgramEntity,
+    TrainingRecordingEntity,
     TrainingTraineeEntity,
+    TrainingTrainerEntity,
 )
 from app.hrms.models.user import UserEntity
 from app.hrms.schemas.user import UserAdminUpdateRequest, UserCreateRequest, UserProfileUpdateRequest
@@ -42,13 +44,14 @@ from app.utils.pagination import PageResult, paginate
 # delete (verified against information_schema.KEY_COLUMN_USAGE) - checked up front so
 # delete_user can raise one clear, itemized message instead of a 500.
 _DELETE_BLOCKER_CHECKS = [
-    (TrainingProgramEntity, TrainingProgramEntity.trainer_id, "the Trainer on {n} training program(s)"),
+    (TrainingTrainerEntity, TrainingTrainerEntity.trainer_id, "a Trainer on {n} training program(s)"),
     (TrainingProgramEntity, TrainingProgramEntity.bu_head_id, "the BU Head on {n} training program(s)"),
     (TrainingProgramEntity, TrainingProgramEntity.created_by, "the creator of {n} training program(s)"),
     (TrainingTraineeEntity, TrainingTraineeEntity.trainee_id, "a Trainee on {n} training program(s)"),
     (TrainingDayEntryEntity, TrainingDayEntryEntity.created_by, "the logger of {n} training day-entry(ies)"),
     (TrainingCommentEntity, TrainingCommentEntity.author_id, "the author of {n} training comment(s)"),
     (TrainingMaterialEntity, TrainingMaterialEntity.added_by, "the uploader of {n} training material(s)"),
+    (TrainingRecordingEntity, TrainingRecordingEntity.added_by, "the uploader of {n} training recording(s)"),
     (TrainingAssessmentEntity, TrainingAssessmentEntity.trainee_id, "the Trainee on {n} training assessment(s)"),
     (TrainingAssessmentEntity, TrainingAssessmentEntity.created_by, "the creator of {n} training assessment(s)"),
     (TrainingAssessmentEntity, TrainingAssessmentEntity.reviewed_by, "the reviewer of {n} training assessment(s)"),

@@ -14,6 +14,8 @@ from app.hrms.schemas.training import (
     DayEntryResponse,
     MaterialLinkCreateRequest,
     MaterialResponse,
+    RecordingCreateRequest,
+    RecordingResponse,
     RejectRequest,
     TrainingCreateRequest,
     TrainingResponse,
@@ -69,6 +71,50 @@ async def get_training(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training not found")
     return result
+
+
+@router.get("/{training_id}/recordings", response_model=list[RecordingResponse])
+async def list_recordings(
+    training_id: int,
+    current_user: CurrentHrmsUser = Depends(get_current_hrms_user),
+    hrms_db: AsyncSession = Depends(get_hrms_db),
+):
+    result = await training_service.list_recordings(hrms_db, current_user, training_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training not found")
+    return result
+
+
+@router.post("/{training_id}/recordings", response_model=RecordingResponse)
+async def add_recording(
+    training_id: int,
+    payload: RecordingCreateRequest,
+    current_user: CurrentHrmsUser = Depends(get_current_hrms_user),
+    hrms_db: AsyncSession = Depends(get_hrms_db),
+):
+    # Fine-grained check (HR/Admin or any of this training's Trainers) lives in the
+    # service, same style as the existing trainer-only endpoints above.
+    result = await training_service.add_recording(hrms_db, current_user, training_id, payload)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Training not found or not yours to update"
+        )
+    return result
+
+
+@router.delete("/{training_id}/recordings/{recording_id}")
+async def delete_recording(
+    training_id: int,
+    recording_id: int,
+    current_user: CurrentHrmsUser = Depends(get_current_hrms_user),
+    hrms_db: AsyncSession = Depends(get_hrms_db),
+):
+    ok = await training_service.delete_recording(hrms_db, current_user, training_id, recording_id)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found or not yours to delete"
+        )
+    return {"message": "Recording removed"}
 
 
 @router.post("/{training_id}/approve", response_model=TrainingResponse)

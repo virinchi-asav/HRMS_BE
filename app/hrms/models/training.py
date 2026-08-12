@@ -55,7 +55,6 @@ class TrainingProgramEntity(HrmsBase):
     # Base/engine) - stored as a plain int and resolved by name in the service layer,
     # same pattern as users.kms_department_id.
     account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    trainer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     bu_head_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default=TrainingStatus.PENDING_APPROVAL.value)
     has_assessment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -72,6 +71,19 @@ class TrainingProgramEntity(HrmsBase):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TrainingTrainerEntity(HrmsBase):
+    """Many-to-many: a training can have multiple Trainers (mirrors
+    TrainingTraineeEntity below, which predates this and already supports multiple
+    Trainees per training)."""
+
+    __tablename__ = "training_trainers"
+    __table_args__ = (UniqueConstraint("training_id", "trainer_id", name="uq_training_trainer"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True)
+    training_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("training_programs.id"), nullable=False)
+    trainer_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
 
 
 class TrainingTraineeEntity(HrmsBase):
@@ -119,6 +131,24 @@ class TrainingMaterialEntity(HrmsBase):
     # Bare stored filename (not a full path) - same convention as file_storage_service's
     # other uploads; the owning training_id gives us the directory.
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    added_by: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TrainingRecordingEntity(HrmsBase):
+    """A link to a recorded training session, hosted externally (e.g. SharePoint) -
+    not an upload, just the link. A training with sessions spanning several days may
+    accumulate several of these over its life, one per session, rather than a single
+    field that gets overwritten - see training_service.add_recording/list_recordings/
+    delete_recording. Addable by HR/Admin or any of the training's Trainers; deletable
+    by whoever added it, or HR/Admin."""
+
+    __tablename__ = "training_recordings"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True)
+    training_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("training_programs.id"), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    link_url: Mapped[str] = mapped_column(String(2000), nullable=False)
     added_by: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

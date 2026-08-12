@@ -90,7 +90,7 @@ async def test_training_report_counts_and_role_gating(client, hrms_admin_token, 
         json={
             "topic": "Report Test Training",
             "account_id": account_id,
-            "trainer_id": trainer_id,
+            "trainer_ids": [trainer_id],
             "trainee_ids": [trainee_id],
             "bu_head_id": bu_head_id,
             "start_date": today_str,

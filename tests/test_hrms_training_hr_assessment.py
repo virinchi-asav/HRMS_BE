@@ -30,7 +30,7 @@ async def test_training_assessment_given_by_validation(client, hrms_admin_token,
 
     base_payload = {
         "topic": "Invalid Given-By",
-        "trainer_id": trainer_id,
+        "trainer_ids": [trainer_id],
         "trainee_ids": [trainee_id],
         "bu_head_id": bu_head_id,
         "start_date": "2026-05-01",
@@ -57,7 +57,7 @@ async def test_hr_given_assessment_full_flow(client, hrms_admin_token, hrms_user
         "/api/hrms/training",
         json={
             "topic": "HR-Given Assessment Training",
-            "trainer_id": trainer_id,
+            "trainer_ids": [trainer_id],
             "trainee_ids": [trainee_id],
             "bu_head_id": bu_head_id,
             "start_date": "2026-06-01",
@@ -173,7 +173,7 @@ async def test_trainer_given_assessment_flow_unaffected(client, hrms_admin_token
         "/api/hrms/training",
         json={
             "topic": "Trainer-Given Assessment Training",
-            "trainer_id": trainer_id,
+            "trainer_ids": [trainer_id],
             "trainee_ids": [trainee_id],
             "bu_head_id": bu_head_id,
             "start_date": "2026-07-01",
@@ -214,7 +214,7 @@ async def test_hr_flow_certificate_issuance(client, hrms_admin_token, hrms_user_
         "/api/hrms/training",
         json={
             "topic": "HR Certificate Flow",
-            "trainer_id": trainer_id,
+            "trainer_ids": [trainer_id],
             "trainee_ids": [trainee_id],
             "bu_head_id": bu_head_id,
             "start_date": "2026-09-01",

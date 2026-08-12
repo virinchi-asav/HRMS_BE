@@ -21,7 +21,7 @@ async def test_delete_user_referenced_as_bu_head_is_rejected_with_clear_message(
         "/api/hrms/training",
         json={
             "topic": "Delete Blocker Training",
-            "trainer_id": trainer_id,
+            "trainer_ids": [trainer_id],
             "trainee_ids": [trainee_id],
             "bu_head_id": bu_head_id,
             "start_date": "2026-10-01",

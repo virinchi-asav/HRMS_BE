@@ -145,7 +145,8 @@ async def hrms_admin_token():
 async def hrms_user_factory():
     """Returns an async factory creating an HRMS user with an arbitrary role and
     returning (user_id, bearer_token) - reused by tests needing several distinct
-    role-holders (e.g. a Trainer, a Trainee, and a BU Head for the training workflow)."""
+    role-holders (e.g. one or more Trainers, a Trainee, and a BU Head for the training
+    workflow)."""
 
     async def _create(name: str, email: str, role: int) -> tuple[int, str]:
         async with HrmsTestSessionLocal() as session:

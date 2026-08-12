@@ -9,7 +9,7 @@ class TrainingCreateRequest(BaseModel):
     topic: str
     description: str | None = None
     account_id: int | None = None
-    trainer_id: int
+    trainer_ids: list[int]
     trainee_ids: list[int]
     bu_head_id: int
     start_date: date
@@ -29,6 +29,11 @@ class TrainingCreateRequest(BaseModel):
         if v not in valid:
             raise ValueError(f"assessment_given_by must be one of {sorted(valid)}")
         return v
+
+
+class RecordingCreateRequest(BaseModel):
+    title: str | None = None
+    link_url: str
 
 
 class RejectRequest(BaseModel):
@@ -63,12 +68,21 @@ class TraineeInfo(BaseModel):
     name: str
 
 
+class TrainerInfo(BaseModel):
+    id: int
+    name: str
+
+
 class TrainingListItem(BaseModel):
     id: int
     topic: str
     account: str | None = None
+    # Deprecated - kept for backward compatibility, populated as the first trainer.
+    # Prefer trainer_ids/trainer_names, which reflect all trainers on this training.
     trainer_id: int
     trainer_name: str
+    trainer_ids: list[int]
+    trainer_names: list[str]
     bu_head_id: int
     bu_head_name: str
     status: str
@@ -84,8 +98,11 @@ class TrainingResponse(BaseModel):
     description: str | None = None
     account_id: int | None = None
     account: str | None = None
+    # Deprecated - kept for backward compatibility, populated as the first trainer.
+    # Prefer trainers, which reflects all trainers on this training.
     trainer_id: int
     trainer_name: str
+    trainers: list[TrainerInfo]
     bu_head_id: int
     bu_head_name: str
     status: str
@@ -130,6 +147,16 @@ class MaterialResponse(BaseModel):
     title: str
     link_url: str | None = None
     file_url: str | None = None
+    added_by: int
+    added_by_name: str
+    created_at: datetime | None = None
+
+
+class RecordingResponse(BaseModel):
+    id: int
+    training_id: int
+    title: str | None = None
+    link_url: str
     added_by: int
     added_by_name: str
     created_at: datetime | None = None

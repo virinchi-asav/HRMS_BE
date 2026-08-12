@@ -16,8 +16,10 @@ from app.hrms.models.training import (
     TrainingDayEntryEntity,
     TrainingMaterialEntity,
     TrainingProgramEntity,
+    TrainingRecordingEntity,
     TrainingStatus,
     TrainingTraineeEntity,
+    TrainingTrainerEntity,
 )
 from app.hrms.models.user import UserEntity as HrmsUserEntity
 from app.hrms.schemas.training import (
@@ -30,6 +32,8 @@ from app.hrms.schemas.training import (
     DayEntryResponse,
     MaterialLinkCreateRequest,
     MaterialResponse,
+    RecordingCreateRequest,
+    RecordingResponse,
     ScreenshotResponse,
     TrainingCreateRequest,
     TrainingResponse,
@@ -71,25 +75,51 @@ async def _trainee_ids(hrms_db: AsyncSession, training_id: int) -> list[int]:
     return [row[0] for row in result.all()]
 
 
+async def _trainer_ids(hrms_db: AsyncSession, training_id: int) -> list[int]:
+    result = await hrms_db.execute(
+        select(TrainingTrainerEntity.trainer_id).where(TrainingTrainerEntity.training_id == training_id)
+    )
+    return [row[0] for row in result.all()]
+
+
+async def _trainer_ids_by_training(hrms_db: AsyncSession, training_ids: list[int]) -> dict[int, list[int]]:
+    if not training_ids:
+        return {}
+    result = await hrms_db.execute(
+        select(TrainingTrainerEntity.training_id, TrainingTrainerEntity.trainer_id).where(
+            TrainingTrainerEntity.training_id.in_(training_ids)
+        )
+    )
+    by_training: dict[int, list[int]] = {}
+    for training_id, trainer_id in result.all():
+        by_training.setdefault(training_id, []).append(trainer_id)
+    return by_training
+
+
+async def _is_trainer(hrms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int) -> bool:
+    return current_user.id in await _trainer_ids(hrms_db, training_id)
+
+
 async def _is_participant(hrms_db: AsyncSession, current_user: CurrentHrmsUser, entity: TrainingProgramEntity) -> bool:
-    """Admin/HR see everything; BU Head sees their own assigned trainings; Trainer/
+    """Admin/HR see everything; BU Head sees their own assigned trainings; Trainers/
     Trainees see the training they're personally part of."""
     if current_user.role in (Role.ADMIN, Role.HR):
         return True
-    if entity.bu_head_id == current_user.id or entity.trainer_id == current_user.id:
+    if entity.bu_head_id == current_user.id or await _is_trainer(hrms_db, current_user, entity.id):
         return True
     return current_user.id in await _trainee_ids(hrms_db, entity.id)
 
 
 async def _is_trainer_or_trainee(hrms_db: AsyncSession, current_user: CurrentHrmsUser, entity: TrainingProgramEntity) -> bool:
-    if entity.trainer_id == current_user.id:
+    if await _is_trainer(hrms_db, current_user, entity.id):
         return True
     return current_user.id in await _trainee_ids(hrms_db, entity.id)
 
 
 async def _to_response(hrms_db: AsyncSession, kms_db: AsyncSession, entity: TrainingProgramEntity) -> TrainingResponse:
     trainee_ids = await _trainee_ids(hrms_db, entity.id)
-    user_ids = set(trainee_ids) | {entity.trainer_id, entity.bu_head_id, entity.created_by}
+    trainer_ids = await _trainer_ids(hrms_db, entity.id)
+    user_ids = set(trainee_ids) | set(trainer_ids) | {entity.bu_head_id, entity.created_by}
     names = await _user_names(hrms_db, user_ids)
 
     account_name = None
@@ -97,14 +127,19 @@ async def _to_response(hrms_db: AsyncSession, kms_db: AsyncSession, entity: Trai
         accounts = await _account_names(kms_db, {entity.account_id})
         account_name = accounts.get(entity.account_id)
 
+    # trainer_id/trainer_name are deprecated (first trainer only) - kept so any
+    # consumer still reading the old singular fields doesn't break; trainers is the
+    # complete list and what new code should use.
+    first_trainer_id = trainer_ids[0] if trainer_ids else 0
     return TrainingResponse(
         id=entity.id,
         topic=entity.topic,
         description=entity.description,
         account_id=entity.account_id,
         account=account_name,
-        trainer_id=entity.trainer_id,
-        trainer_name=names.get(entity.trainer_id, "Unknown"),
+        trainer_id=first_trainer_id,
+        trainer_name=names.get(first_trainer_id, "Unknown"),
+        trainers=[{"id": tid, "name": names.get(tid, "Unknown")} for tid in trainer_ids],
         bu_head_id=entity.bu_head_id,
         bu_head_name=names.get(entity.bu_head_id, "Unknown"),
         status=entity.status,
@@ -128,18 +163,24 @@ async def create_training(
 ) -> TrainingResponse:
     if not data.trainee_ids:
         raise ValueError("At least one trainee is required")
-    if data.trainer_id in data.trainee_ids:
-        raise ValueError("The Trainer cannot also be listed as a Trainee")
+    if not data.trainer_ids:
+        raise ValueError("At least one trainer is required")
+    overlap = set(data.trainer_ids) & set(data.trainee_ids)
+    if overlap:
+        raise ValueError("A Trainer cannot also be listed as a Trainee")
     if data.end_date < data.start_date:
         raise ValueError("End date cannot be before the start date")
 
-    user_ids = set(data.trainee_ids) | {data.trainer_id, data.bu_head_id}
+    user_ids = set(data.trainee_ids) | set(data.trainer_ids) | {data.bu_head_id}
     result = await hrms_db.execute(select(HrmsUserEntity).where(HrmsUserEntity.id.in_(user_ids)))
     users_by_id = {u.id: u for u in result.scalars().all()}
 
-    trainer = users_by_id.get(data.trainer_id)
-    if trainer is None or trainer.role != Role.TEAM_MEMBER:
-        raise ValueError("The Trainer must be a Team Member")
+    trainers = []
+    for trainer_id in data.trainer_ids:
+        trainer = users_by_id.get(trainer_id)
+        if trainer is None or trainer.role != Role.TEAM_MEMBER:
+            raise ValueError(f"Trainer {trainer_id} must be a Team Member")
+        trainers.append(trainer)
 
     bu_head = users_by_id.get(data.bu_head_id)
     if bu_head is None or bu_head.role != Role.BU_HEAD:
@@ -162,7 +203,6 @@ async def create_training(
         topic=data.topic,
         description=data.description,
         account_id=data.account_id,
-        trainer_id=data.trainer_id,
         bu_head_id=data.bu_head_id,
         status=TrainingStatus.PENDING_APPROVAL.value,
         has_assessment=data.has_assessment,
@@ -176,14 +216,17 @@ async def create_training(
     hrms_db.add(entity)
     await hrms_db.flush()
 
+    for trainer_id in data.trainer_ids:
+        hrms_db.add(TrainingTrainerEntity(training_id=entity.id, trainer_id=trainer_id))
     for trainee_id in data.trainee_ids:
         hrms_db.add(TrainingTraineeEntity(training_id=entity.id, trainee_id=trainee_id))
 
     await hrms_db.commit()
     await hrms_db.refresh(entity)
 
+    trainer_names = ", ".join(t.name for t in trainers)
     await email_service.send_training_pending_approval_email(
-        bu_head.email, bu_head.name, entity.topic, trainer.name, entity.id
+        bu_head.email, bu_head.name, entity.topic, trainer_names, entity.id
     )
 
     return await _to_response(hrms_db, kms_db, entity)
@@ -200,10 +243,13 @@ async def list_trainings(
         trainee_subq = select(TrainingTraineeEntity.training_id).where(
             TrainingTraineeEntity.trainee_id == current_user.id
         )
+        trainer_subq = select(TrainingTrainerEntity.training_id).where(
+            TrainingTrainerEntity.trainer_id == current_user.id
+        )
         stmt = select(TrainingProgramEntity).where(
             TrainingProgramEntity.status != TrainingStatus.PENDING_APPROVAL.value,
             or_(
-                TrainingProgramEntity.trainer_id == current_user.id,
+                TrainingProgramEntity.id.in_(trainer_subq),
                 TrainingProgramEntity.id.in_(trainee_subq),
             ),
         )
@@ -212,7 +258,8 @@ async def list_trainings(
 
     trainings = page_result.items
     training_ids = [t.id for t in trainings]
-    user_ids = {t.trainer_id for t in trainings} | {t.bu_head_id for t in trainings}
+    trainer_ids_by_training = await _trainer_ids_by_training(hrms_db, training_ids)
+    user_ids = {tid for ids in trainer_ids_by_training.values() for tid in ids} | {t.bu_head_id for t in trainings}
     account_ids = {t.account_id for t in trainings if t.account_id}
 
     names = await _user_names(hrms_db, user_ids)
@@ -224,8 +271,11 @@ async def list_trainings(
             "id": t.id,
             "topic": t.topic,
             "account": accounts.get(t.account_id),
-            "trainer_id": t.trainer_id,
-            "trainer_name": names.get(t.trainer_id, "Unknown"),
+            # Deprecated singular fields - first trainer only, for backward compat.
+            "trainer_id": (trainer_ids_by_training.get(t.id) or [0])[0],
+            "trainer_name": names.get((trainer_ids_by_training.get(t.id) or [0])[0], "Unknown"),
+            "trainer_ids": trainer_ids_by_training.get(t.id, []),
+            "trainer_names": [names.get(tid, "Unknown") for tid in trainer_ids_by_training.get(t.id, [])],
             "bu_head_id": t.bu_head_id,
             "bu_head_name": names.get(t.bu_head_id, "Unknown"),
             "status": t.status,
@@ -248,6 +298,84 @@ async def get_training(
     return await _to_response(hrms_db, kms_db, entity)
 
 
+async def add_recording(
+    hrms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int, data: RecordingCreateRequest
+) -> RecordingResponse | None:
+    """Adds one recording link (e.g. SharePoint) for a session of this training.
+    Allowed for HR/Admin, or any of this training's Trainers - not the BU Head or
+    Trainees, and not gated by training status (a session's recording might be added
+    well after the training completes). A training accumulates one of these per
+    session over its life, rather than a single overwritable link."""
+    entity = await hrms_db.get(TrainingProgramEntity, training_id)
+    if entity is None:
+        return None
+    is_allowed = current_user.role in (Role.ADMIN, Role.HR) or await _is_trainer(hrms_db, current_user, training_id)
+    if not is_allowed:
+        return None
+    recording = TrainingRecordingEntity(
+        training_id=training_id,
+        title=data.title,
+        link_url=data.link_url,
+        added_by=current_user.id,
+        created_at=datetime.utcnow(),
+    )
+    hrms_db.add(recording)
+    await hrms_db.commit()
+    await hrms_db.refresh(recording)
+    return RecordingResponse(
+        id=recording.id,
+        training_id=recording.training_id,
+        title=recording.title,
+        link_url=recording.link_url,
+        added_by=recording.added_by,
+        added_by_name=current_user.name,
+        created_at=recording.created_at,
+    )
+
+
+async def list_recordings(
+    hrms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int
+) -> list[RecordingResponse] | None:
+    entity = await hrms_db.get(TrainingProgramEntity, training_id)
+    if entity is None or not await _is_participant(hrms_db, current_user, entity):
+        return None
+    result = await hrms_db.execute(
+        select(TrainingRecordingEntity)
+        .where(TrainingRecordingEntity.training_id == training_id)
+        .order_by(TrainingRecordingEntity.created_at, TrainingRecordingEntity.id)
+    )
+    recordings = result.scalars().all()
+    names = await _user_names(hrms_db, {r.added_by for r in recordings})
+    return [
+        RecordingResponse(
+            id=r.id,
+            training_id=r.training_id,
+            title=r.title,
+            link_url=r.link_url,
+            added_by=r.added_by,
+            added_by_name=names.get(r.added_by, "Unknown"),
+            created_at=r.created_at,
+        )
+        for r in recordings
+    ]
+
+
+async def delete_recording(
+    hrms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int, recording_id: int
+) -> bool:
+    """Deletable by whoever added it, or HR/Admin - not by other Trainers, the BU
+    Head, or Trainees."""
+    recording = await hrms_db.get(TrainingRecordingEntity, recording_id)
+    if recording is None or recording.training_id != training_id:
+        return False
+    is_allowed = current_user.role in (Role.ADMIN, Role.HR) or recording.added_by == current_user.id
+    if not is_allowed:
+        return False
+    await hrms_db.delete(recording)
+    await hrms_db.commit()
+    return True
+
+
 async def approve_training(
     hrms_db: AsyncSession, kms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int
 ) -> TrainingResponse | None:
@@ -261,8 +389,9 @@ async def approve_training(
     await hrms_db.refresh(entity)
 
     trainee_ids = await _trainee_ids(hrms_db, entity.id)
+    trainer_ids = await _trainer_ids(hrms_db, entity.id)
     recipients_result = await hrms_db.execute(
-        select(HrmsUserEntity).where(HrmsUserEntity.id.in_({entity.trainer_id, *trainee_ids}))
+        select(HrmsUserEntity).where(HrmsUserEntity.id.in_({*trainer_ids, *trainee_ids}))
     )
     for recipient in recipients_result.scalars().all():
         await email_service.send_training_approved_email(recipient.email, recipient.name, entity.topic, entity.id)
@@ -283,8 +412,9 @@ async def reject_training(
     await hrms_db.commit()
     await hrms_db.refresh(entity)
 
+    trainer_ids = await _trainer_ids(hrms_db, entity.id)
     recipients_result = await hrms_db.execute(
-        select(HrmsUserEntity).where(HrmsUserEntity.id.in_({entity.trainer_id, entity.created_by}))
+        select(HrmsUserEntity).where(HrmsUserEntity.id.in_({*trainer_ids, entity.created_by}))
     )
     for recipient in recipients_result.scalars().all():
         await email_service.send_training_rejected_email(recipient.email, recipient.name, entity.topic, reason, entity.id)
@@ -295,7 +425,11 @@ async def mark_completed(
     hrms_db: AsyncSession, kms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int
 ) -> TrainingResponse | None:
     entity = await hrms_db.get(TrainingProgramEntity, training_id)
-    if entity is None or entity.trainer_id != current_user.id or entity.status != TrainingStatus.APPROVED.value:
+    if (
+        entity is None
+        or not await _is_trainer(hrms_db, current_user, training_id)
+        or entity.status != TrainingStatus.APPROVED.value
+    ):
         return None
     entity.status = TrainingStatus.COMPLETED.value
     entity.completed_at = datetime.utcnow()
@@ -314,7 +448,11 @@ async def add_day_entry(
     hrms_db: AsyncSession, current_user: CurrentHrmsUser, training_id: int, data: DayEntryCreateRequest
 ) -> DayEntryResponse | None:
     entity = await hrms_db.get(TrainingProgramEntity, training_id)
-    if entity is None or entity.trainer_id != current_user.id or entity.status != TrainingStatus.APPROVED.value:
+    if (
+        entity is None
+        or not await _is_trainer(hrms_db, current_user, training_id)
+        or entity.status != TrainingStatus.APPROVED.value
+    ):
         return None
     day_entry = TrainingDayEntryEntity(
         training_id=training_id,
@@ -438,7 +576,11 @@ async def add_material_link(
     data: MaterialLinkCreateRequest,
 ) -> MaterialResponse | None:
     entity = await hrms_db.get(TrainingProgramEntity, training_id)
-    if entity is None or entity.trainer_id != current_user.id or not _can_manage_materials(entity):
+    if (
+        entity is None
+        or not await _is_trainer(hrms_db, current_user, training_id)
+        or not _can_manage_materials(entity)
+    ):
         return None
     material = TrainingMaterialEntity(
         training_id=training_id,
@@ -474,7 +616,11 @@ async def add_material_document(
     original_filename: str,
 ) -> MaterialResponse | None:
     entity = await hrms_db.get(TrainingProgramEntity, training_id)
-    if entity is None or entity.trainer_id != current_user.id or not _can_manage_materials(entity):
+    if (
+        entity is None
+        or not await _is_trainer(hrms_db, current_user, training_id)
+        or not _can_manage_materials(entity)
+    ):
         return None
     stored_name = file_storage_service.unique_filename(original_filename)
     await file_storage_service.save_file(
@@ -600,7 +746,7 @@ async def create_assessment(
     detail_document_filename: str | None,
 ) -> AssessmentResponse:
     training = await hrms_db.get(TrainingProgramEntity, training_id)
-    if training is None or training.trainer_id != current_user.id:
+    if training is None or not await _is_trainer(hrms_db, current_user, training_id):
         raise ValueError("Training not found or not yours to manage")
     if not training.has_assessment:
         raise ValueError("This training does not have assessment enabled")
@@ -655,8 +801,8 @@ async def list_assessments(
         return None
 
     stmt = select(TrainingAssessmentEntity).where(TrainingAssessmentEntity.training_id == training_id)
-    is_trainee_only = (
-        current_user.role not in (Role.ADMIN, Role.HR, Role.BU_HEAD) and current_user.id != training.trainer_id
+    is_trainee_only = current_user.role not in (Role.ADMIN, Role.HR, Role.BU_HEAD) and not await _is_trainer(
+        hrms_db, current_user, training_id
     )
     if is_trainee_only:
         stmt = stmt.where(TrainingAssessmentEntity.trainee_id == current_user.id)
@@ -674,7 +820,9 @@ async def get_assessment(
     entity = await hrms_db.get(TrainingAssessmentEntity, assessment_id)
     if training is None or entity is None or entity.training_id != training_id:
         return None
-    is_admin_view = current_user.role in (Role.ADMIN, Role.HR, Role.BU_HEAD) or current_user.id == training.trainer_id
+    is_admin_view = current_user.role in (Role.ADMIN, Role.HR, Role.BU_HEAD) or await _is_trainer(
+        hrms_db, current_user, training_id
+    )
     if not is_admin_view and entity.trainee_id != current_user.id:
         return None
     return await _to_assessment_response(hrms_db, request, entity)
@@ -807,7 +955,7 @@ async def review_assessment(
         training is None
         or entity is None
         or entity.training_id != training_id
-        or training.trainer_id != current_user.id
+        or not await _is_trainer(hrms_db, current_user, training_id)
         or entity.status != AssessmentStatus.READY_FOR_REVIEW.value
     ):
         return None
