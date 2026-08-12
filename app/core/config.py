@@ -1,7 +1,7 @@
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, make_url
 
 
 class Settings(BaseSettings):
@@ -54,10 +54,18 @@ class Settings(BaseSettings):
     def sqlalchemy_database_uri(self) -> str:
         if self.database_url:
             url = self.database_url
+            if url.startswith("postgres://"):
+                url = "postgresql://" + url[len("postgres://") :]
             if url.startswith("postgresql://"):
-                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            elif url.startswith("postgres://"):
-                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+                parsed = make_url(url).set(drivername="postgresql+asyncpg")
+                # Neon's URL comes with ?sslmode=require - that's libpq/psycopg2 syntax.
+                # SQLAlchemy forwards URL query params straight through as connect()
+                # kwargs, and asyncpg's connect() has no "sslmode" param (only "ssl",
+                # supplied separately via sqlalchemy_connect_args below) - left in place
+                # this causes "connect() got an unexpected keyword argument 'sslmode'".
+                if "sslmode" in parsed.query:
+                    parsed = parsed.set(query={k: v for k, v in parsed.query.items() if k != "sslmode"})
+                url = parsed.render_as_string(hide_password=False)
             return url
         # Built via URL.create (not an f-string) so special characters in db_user/
         # db_password - e.g. an "@" in the password - get percent-encoded instead of
