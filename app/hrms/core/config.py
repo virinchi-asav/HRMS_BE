@@ -74,14 +74,13 @@ class HrmsSettings(BaseSettings):
             if url.startswith("postgres://"):
                 url = "postgresql://" + url[len("postgres://") :]
             if url.startswith("postgresql://"):
-                parsed = make_url(url).set(drivername="postgresql+asyncpg")
-                # Neon's URL comes with ?sslmode=require - that's libpq/psycopg2 syntax.
-                # SQLAlchemy forwards URL query params straight through as connect()
-                # kwargs, and asyncpg's connect() has no "sslmode" param (only "ssl",
-                # supplied separately via sqlalchemy_connect_args below) - left in place
-                # this causes "connect() got an unexpected keyword argument 'sslmode'".
-                if "sslmode" in parsed.query:
-                    parsed = parsed.set(query={k: v for k, v in parsed.query.items() if k != "sslmode"})
+                # Neon's URL comes with libpq-only query params (?sslmode=require,
+                # &channel_binding=require, ...) that psycopg2/libpq understands but
+                # asyncpg's connect() does not - SQLAlchemy forwards URL query params
+                # straight through as connect() kwargs, so any of these left in place
+                # crashes with "connect() got an unexpected keyword argument '<name>'".
+                # Drop them all; TLS is supplied separately via sqlalchemy_connect_args.
+                parsed = make_url(url).set(drivername="postgresql+asyncpg", query={})
                 url = parsed.render_as_string(hide_password=False)
             return url
         # Built via URL.create (not an f-string) so special characters in hrms_db_user/
